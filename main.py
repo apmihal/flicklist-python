@@ -2,6 +2,7 @@ import webapp2
 import cgi
 import jinja2
 import os
+from google.appengine.ext import db
 
 # set up jinja
 template_dir = os.path.join(os.path.dirname(__file__), "templates")
@@ -15,7 +16,6 @@ terrible_movies = [
     "Nine Lives"
 ]
 
-
 def getUnwatchedMovies():
     """ Returns the list of movies the user wants to watch (but hasnt yet) """
 
@@ -26,7 +26,13 @@ def getUnwatchedMovies():
 def getWatchedMovies():
     """ Returns the list of movies the user has already watched """
 
-    return [ "The Matrix", "The Big Green", "Ping Ping Playa" ]
+    return [ "The Matrix", "The Big Green", "Ping Pong Playa" ]
+
+class Movie(db.Model):
+    title = db.StringProperty(required=True)
+    watched = db.BooleanProperty(default=False, required=True)
+    rating = db.RatingProperty()
+    created = db.DateTimeProperty(auto_now_add=True)
 
 
 class Handler(webapp2.RequestHandler):
@@ -49,7 +55,8 @@ class Index(Handler):
     def get(self):
         t = jinja_env.get_template("frontpage.html")
         error = cgi.escape(self.request.get("error"), quote=True)
-        content = t.render(movies=getUnwatchedMovies(), error=error)
+        movielist = db.GqlQuery("SELECT * FROM Movie")
+        content = t.render(movies=movielist, error=error)
         self.response.write(content)
 
 class AddMovie(Handler):
@@ -73,6 +80,9 @@ class AddMovie(Handler):
         # 'escape' the user's input so that if they typed HTML, it doesn't mess up our site
         new_movie_escaped = cgi.escape(new_movie, quote=True)
 
+        m = Movie(title=new_movie_escaped)
+        m.put()
+
         # render the confirmation message
         t = jinja_env.get_template("add-confirmation.html")
         content = t.render(movie = new_movie_escaped)
@@ -90,18 +100,16 @@ class WatchedMovie(Handler):
 
 
     def post(self):
-        watched_movie = self.request.get("watched-movie")
-
+        watched_movie_id = self.request.get("watched-movie")
+        watched_movie = Movie.get_by_id(int(watched_movie_id))
         # if the movie movie is just whitespace (or nonexistant), reject.
         # (we didn't check for this last time--only checked in the AddMovie handler--but we probably should have!)
-        if not watched_movie or watched_movie.strip() == "":
+        if not watched_movie or watched_movie.title.strip() == "":
             self.renderError(400)
             return
 
-        # if user tried to cross off a movie that is not in their list, reject
-        if not (watched_movie in getUnwatchedMovies()):
-            self.renderError(400)
-            return
+        watched_movie.watched = True
+        watched_movie.put()
 
         # render confirmation page
         t = jinja_env.get_template("watched-it-confirmation.html")

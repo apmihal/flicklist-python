@@ -2,6 +2,7 @@ import webapp2
 import cgi
 import jinja2
 import os
+import re
 from google.appengine.ext import db
 
 # set up jinja
@@ -16,6 +17,9 @@ terrible_movies = [
     "Nine Lives"
 ]
 
+class User(db.Model):
+    username = db.StringProperty(required = True)
+    password = db.StringProperty(required = True)
 
 class Movie(db.Model):
     title = db.StringProperty(required = True)
@@ -27,6 +31,10 @@ class Handler(webapp2.RequestHandler):
     """ A base RequestHandler class for our app.
         The other handlers inherit form this one.
     """
+
+    def get_user_by_username(self, username):
+        result = db.GqlQuery("SELECT * FROM User WHERE username = '%s'" % username)
+        return result.get()
 
     def renderError(self, error_code):
         """ Sends an HTTP error code and a generic "oops!" message to the client. """
@@ -134,10 +142,88 @@ class MovieRatings(Handler):
         else:
             self.renderError(400)
 
+class Register(Handler):
+
+    def verify_username(self, username):
+        USER_RE = re.compile(r"^[a-zA-Z0-9_-]{3,20}$")
+        return not USER_RE.match(username)
+
+    def verify_password(self, password):
+        PASS_RE = re.compile(r"^.{3,20}$")
+        return not PASS_RE.match(password)
+
+    def passwords_match(self, password, verify):
+        return password != verify
+
+    def get(self):
+        t = jinja_env.get_template("register.html")
+        content = t.render(error = {})
+        self.response.write(content)
+
+    def post(self):
+        username = self.request.get("username")
+        password = self.request.get("password")
+        verify = self.request.get("verify")
+
+        username_error = self.verify_username(username)
+        password_error = self.verify_password(password)
+        verify_error = self.passwords_match(password, verify)
+
+        username_taken = self.get_user_by_username(username)
+
+        error = {}
+
+        if username_taken:
+            error['user_error'] = "That name is already taken"
+        else:
+            if username_error:
+                error['user_error'] = "Invalid username"
+
+            if password_error:
+                error['password_error'] = "Invalid password"
+
+            if verify_error:
+                error['verify_error'] = "Passwords do not match"
+
+        if error:
+            t = jinja_env.get_template("register.html")
+            content = t.render(error = error)
+            self.response.write(content)
+        else:
+            new_user = User(username=username, password=password)
+            new_user.put()
+            self.redirect("/")
+
+class Login(Handler):
+
+    def get(self):
+        t = jinja_env.get_template("login.html")
+        content = t.render(error = {})
+        self.response.write(content)
+
+    def post(self):
+        username = self.request.get("username")
+        password = self.request.get("password")
+
+        user = self.get_user_by_username(username)
+
+        if not user:
+            t = jinja_env.get_template("login.html")
+            content = t.render(user_error = "User does not exist")
+            self.response.write(content)
+        else:
+            if(user.password != password):
+                t = jinja_env.get_template("login.html")
+                content = t.render(password_error = "Incorrect password")
+                self.response.write(content)
+            else:
+                self.redirect('/')
 
 app = webapp2.WSGIApplication([
     ('/', Index),
     ('/add', AddMovie),
     ('/watched-it', WatchedMovie),
-    ('/ratings', MovieRatings)
+    ('/ratings', MovieRatings),
+    ('/register', Register),
+    ('/login', Login)
 ], debug=True)
